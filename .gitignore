@@ -1,0 +1,7 @@
+# ignore IntellijIdea project folder and Illuminsted cloud
+.idea
+IlluminatedCloud
+*.iml
+
+#Ignore package.xml
+package.xml
