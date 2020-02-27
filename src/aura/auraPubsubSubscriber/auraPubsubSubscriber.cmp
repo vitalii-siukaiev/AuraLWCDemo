@@ -1,0 +1,28 @@
+<!--
+ The pubsub communication approach is used to provide a communication mechanism between sibling components assembled in a flexipage (App Builder) where traditional parent/child communication patterns are not available.
+ Do NOT use this utility for parent/child communication. Use the guidelines below instead.
+ Child-to-parent communication where the parent is an Aura component:
+ - If the child is an Aura component, fire a component event in the child component
+ - If the child is a Lightning Web component, fire a DOM event in the child component
+ Parent-to-child communication where the parent is an Aura component:
+ - If the child is an Aura component, use attribute passing or call an aura:method defined in the child component
+ - If the child is a Lightning Web component, use attribute passing or call a public @api method defined in the child component
+-->
+<aura:component implements="flexipage:availableForAllPageTypes">
+    <aura:attribute name="lwcEventData" type="String" />
+
+    <c:auraPubsub aura:id="pubsub" onready="{!c.handlePubsubReady}" />
+
+    <aura:handler name="destroy" value="{!this}" action="{!c.handleDestroy}" />
+
+    <lightning:card title="auraPubsubSubscriber" iconName="custom:custom30">
+
+        <div class="slds-m-around_large">
+            LWC says:
+            <aura:if isTrue="{!not(empty(v.lwcEventData))}">
+                <div>{!v.lwcEventData}</div>
+            </aura:if>
+        </div>
+
+    </lightning:card>
+</aura:component>

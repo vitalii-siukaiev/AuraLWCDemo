@@ -1,0 +1,13 @@
+<aura:component implements="flexipage:availableForAllPageTypes" description="auraPubsubPublisher">
+    <c:auraPubsub aura:id="pubsub" />
+
+    <lightning:card title="auraPubsubPublisher" iconName="custom:custom30">
+        <lightning:button
+                variant="neutral"
+                type="button"
+                label="Fire Event"
+                onclick="{!c.handleButtonClick}"
+                class="slds-m-left--medium"
+        />
+    </lightning:card>
+</aura:component>

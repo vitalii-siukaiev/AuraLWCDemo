@@ -1,0 +1,15 @@
+
+<aura:component implements="flexipage:availableForAllPageTypes">
+
+    <lightning:card title="auraParent" iconName="custom:custom30">
+        <lightning:button
+                variant="neutral"
+                type="button"
+                label="Call child method"
+                onclick="{!c.handleButtonClick}"
+                class="slds-m-left--medium"
+        />
+        <c:lwcChild aura:id="childComponent" name="Foo" />
+    </lightning:card>
+
+</aura:component>

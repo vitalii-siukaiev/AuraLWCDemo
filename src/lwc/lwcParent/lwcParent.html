@@ -1,0 +1,14 @@
+
+<!-- Lwc Parent -->
+<template>
+    <lightning-card title="lwcParent" icon-name="custom:custom30">
+        <lightning-button
+                variant="neutral"
+                type="button"
+                label="Call child method"
+                onclick={handleButtonClick}
+                class="slds-m-left--medium"
+        ></lightning-button>
+    <c-lwc-child name="Foo" ></c-lwc-child>
+    </lightning-card>
+</template>

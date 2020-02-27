@@ -1,0 +1,14 @@
+
+<aura:component implements="flexipage:availableForAllPageTypes" description="auraWrapper">
+
+    <aura:attribute name="eventData" type="String" />
+
+    <div aura:id="lwcComponent">
+        <lightning:card title="auraWrapper(BLUE)" iconName="custom:custom30">
+            <aura:if isTrue="{!not(empty(v.eventData))}">
+                {!v.eventData}
+            </aura:if>
+            <c:lwcTopLevel onbottomiscalling="{!c.handleBottomIsCalling}" />
+        </lightning:card>
+    </div>
+</aura:component>

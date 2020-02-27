@@ -1,0 +1,16 @@
+
+<template>
+
+    <lightning-card title="lwcChild" icon-name="custom:custom14" class=slds-m-vertical--x-small>
+        <div class="slds-card__body slds-card__body_inner">
+            Hello, {name}!
+
+            <div if:true={methodCalled}>
+                {methodCalled}
+                <div>param passed: {param.firstName}, {param.lastName}</div>
+            </div>
+
+        </div>
+    </lightning-card>
+
+</template>

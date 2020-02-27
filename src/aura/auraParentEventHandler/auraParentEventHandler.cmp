@@ -1,0 +1,13 @@
+
+<aura:component implements="flexipage:availableForAllPageTypes" description="auraParentEventHandler">
+    <aura:attribute name="auraParams" type="Object" />
+    <lightning:card title="auraParentEventHandler" iconName="custom:custom30">
+        <div class="slds-m-around_small">
+            <aura:if isTrue="{!not(empty(v.auraParams))}">
+                Aura: {!v.auraParams.firstName + ', ' + v.auraParams.lastName}
+            </aura:if>
+
+            <c:lwcChildEvent oncustomevent="{!c.handleEvent}" />
+        </div>
+    </lightning:card>
+</aura:component>

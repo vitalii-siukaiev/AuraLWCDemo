@@ -1,0 +1,15 @@
+
+<template>
+    <lightning-card title="lwcChildEvent" icon-name="custom:custom14" class=slds-m-vertical--x-small>
+        <lightning-button
+                variant="neutral"
+                type="button"
+                label="Fire Event"
+                onclick={handleButtonClick}
+                class="slds-m-left--medium"
+        ></lightning-button>
+        <div if:true={param} class="slds-m-left_large slds-m-top_small">
+            LWC Child: {param.firstName}, {param.lastName}
+        </div>
+    </lightning-card>
+</template>

@@ -1,0 +1,14 @@
+
+<template>
+    <lightning-card title="lwcParentEventHandler" icon-name="custom:custom30">
+        <div class="slds-m-around_small">
+
+            <div if:true={parentParams}>
+                LWC Parent: {parentParams.firstName}, {parentParams.lastName}
+            </div>
+
+            <c-lwc-child-event></c-lwc-child-event>
+
+        </div>
+    </lightning-card>
+</template>
