@@ -5,7 +5,7 @@
             component.set('v.lwcEventData', JSON.stringify(eventData));
             //eventData.firstName = 'Bart';
         });
-        pubsub.registerListener('auraButtonClick', callback);
+        pubsub.registerListener('lwcButtonClick', callback);
     },
 
     handleDestroy: function(component) {
