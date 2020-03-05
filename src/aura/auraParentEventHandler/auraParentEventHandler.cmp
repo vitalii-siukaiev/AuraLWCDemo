@@ -5,6 +5,8 @@
         <div class="slds-m-around_small">
             <aura:if isTrue="{!not(empty(v.auraParams))}">
                 Aura: {!v.auraParams.firstName + ', ' + v.auraParams.lastName}
+                <div>age: {!v.auraParams.additional.age}</div>
+                <div>gender: {!v.auraParams.additional.gender}</div>
             </aura:if>
 
             <c:lwcChildEvent oncustomevent="{!c.handleEvent}" />

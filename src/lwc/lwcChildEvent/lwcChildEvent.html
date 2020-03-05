@@ -9,7 +9,9 @@
                 class="slds-m-left--medium"
         ></lightning-button>
         <div if:true={param} class="slds-m-left_large slds-m-top_small">
-            LWC Child: {param.firstName}, {param.lastName}
+            <div>LWC Child: {param.firstName}, {param.lastName}</div>
+            <div>age: {param.additional.age}</div>
+            <div>age: {param.additional.gender}</div>
         </div>
     </lightning-card>
 </template>
