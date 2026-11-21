@@ -107,6 +107,23 @@ edge to find. What the test shows is that the **downside is capped** (worst case
 −80% for holding). The bot gives up a lot of upside in strong bull runs in exchange for
 that protection. Backtest on real data (`backtest --symbol ...`) before trusting it.
 
+### With Bybit fees (all 30 seeds, $50 start, ~5.5 months of hourly bars each)
+
+Bybit spot VIP 0 is 0.10% maker / 0.10% taker
+([fee structure](https://www.bybit.com/en/help-center/article/Trading-Fee-Structure)).
+
+| Scenario | Mean | Median | Worst | Best | Runs in profit | Max DD |
+|---|---|---|---|---|---|---|
+| No fees (reference) | +6.2% | +4.0% | −8.3% | +45.8% | 67% | 8.5% |
+| **Bybit 0.10% + 0.05% slippage** | **+2.8%** | **+1.0%** | **−6.4%** | +34.5% | 67% | 8.1% |
+| Bybit 0.10% + 0.10% slippage | +2.3% | +1.4% | −5.7% | +24.0% | 63% | 7.2% |
+| 0.15% fee + 0.05% slippage | +2.2% | +0.9% | −5.7% | +26.1% | 60% | 7.4% |
+| Stress 0.20% + 0.10% slippage | +1.0% | +0.5% | −5.6% | +14.7% | 53% | 6.1% |
+
+Fees cut the average result by more than half. The bot adapts to higher fees by taking fewer
+trades (its fee filter rejects setups that are too small), which is why the downside stays capped.
+On $50 a typical +1% run is about **$0.50**.
+
 ## Project layout
 
 ```
