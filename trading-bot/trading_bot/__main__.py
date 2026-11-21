@@ -5,10 +5,10 @@ import argparse
 import logging
 
 from .backtest import run_backtest
-from .data import drop_open_candle, fetch_binance, load_csv, synthetic
+from .data import drop_open_candle, fetch, load_csv, synthetic
 from .engine import TradingEngine
 from .regime import classify
-from .risk import RiskConfig
+from .risk import EXCHANGE_FEES, RiskConfig
 from .selector import StrategySelector
 
 
@@ -17,7 +17,12 @@ def _data(args):
         return synthetic(args.bars, seed=args.seed)
     if args.csv:
         return load_csv(args.csv)
-    return drop_open_candle(fetch_binance(args.symbol, args.interval, total=args.bars), args.interval)
+    return drop_open_candle(fetch(args.exchange, args.symbol, args.interval, total=args.bars), args.interval)
+
+
+def _cfg(args) -> RiskConfig:
+    fee = args.fee if args.fee is not None else EXCHANGE_FEES[args.exchange]
+    return RiskConfig(starting_capital=args.capital, fee_rate=fee)
 
 
 def main() -> None:
@@ -28,6 +33,8 @@ def main() -> None:
         p.add_argument("--symbol", default="BTC/USDT")
         p.add_argument("--interval", default="1h")
         p.add_argument("--capital", type=float, default=50.0)
+        p.add_argument("--exchange", choices=sorted(EXCHANGE_FEES), default="bybit")
+        p.add_argument("--fee", type=float, help="override fee per side, e.g. 0.001 = 0.1%%")
         p.add_argument("-v", "--verbose", action="store_true")
         if name in ("backtest", "analyze"):
             p.add_argument("--bars", type=int, default=3000)
@@ -47,7 +54,8 @@ def main() -> None:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
     if args.cmd == "backtest":
-        res = run_backtest(_data(args), RiskConfig(starting_capital=args.capital))
+        res = run_backtest(_data(args), _cfg(args))
+        print(f"Exchange {args.exchange}, fee {res.engine.risk.cfg.fee_rate:.3%} per side")
         print(res.report())
         print("Strategy health:", res.engine.selector.summary())
         for t in res.engine.trades[-10:]:
@@ -67,7 +75,7 @@ def main() -> None:
         print("Best setup:", f"{best.strategy} stop {best.stop:.2f} target {best.target:.2f}" if best else "none - stay in cash")
     else:
         from .live import run
-        run(args.symbol, args.interval, args.cmd, args.capital, args.state, args.poll, args.once)
+        run(args.symbol, args.interval, args.cmd, _cfg(args), args.state, args.poll, args.once, args.exchange)
 
 
 if __name__ == "__main__":

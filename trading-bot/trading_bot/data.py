@@ -45,6 +45,54 @@ def fetch_binance(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 10
     return df[~df.index.duplicated()].sort_index()
 
 
+BYBIT_URLS = ["https://api.bybit.com", "https://api.bytick.com"]
+BYBIT_INTERVALS = {"1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "2h": "120",
+                   "4h": "240", "6h": "360", "12h": "720", "1d": "D", "1w": "W"}
+
+
+def fetch_bybit(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 1000,
+                total: int | None = None, category: str = "spot") -> pd.DataFrame:
+    """Fetch OHLCV candles from Bybit v5 public API (no key needed)."""
+    total = total or limit
+    rows: list = []
+    end = None
+    last_err = None
+    while len(rows) < total:
+        params = {"category": category, "symbol": symbol.replace("/", ""),
+                  "interval": BYBIT_INTERVALS[interval], "limit": min(1000, total - len(rows))}
+        if end:
+            params["end"] = end
+        for base in BYBIT_URLS:
+            try:
+                r = requests.get(f"{base}/v5/market/kline", params=params, timeout=15)
+                r.raise_for_status()
+                js = r.json()
+                if js.get("retCode") != 0:
+                    raise RuntimeError(js.get("retMsg"))
+                batch = js["result"]["list"][::-1]  # Bybit returns newest first
+                break
+            except Exception as e:
+                last_err = e
+        else:
+            raise RuntimeError(f"could not fetch Bybit data: {last_err}")
+        if not batch:
+            break
+        rows = batch + rows
+        end = int(batch[0][0]) - 1
+        if len(batch) < params["limit"]:
+            break
+        time.sleep(0.2)
+    df = pd.DataFrame(rows, columns=["t", *COLUMNS, "turnover"])
+    df.index = pd.to_datetime(df["t"].astype("int64"), unit="ms", utc=True)
+    df = df[COLUMNS].astype(float)
+    return df[~df.index.duplicated()].sort_index()
+
+
+def fetch(exchange: str, symbol: str, interval: str, limit: int = 1000, total: int | None = None) -> pd.DataFrame:
+    fn = fetch_bybit if exchange == "bybit" else fetch_binance
+    return fn(symbol, interval, limit=limit, total=total)
+
+
 def drop_open_candle(df: pd.DataFrame, interval: str) -> pd.DataFrame:
     """Binance returns the still-forming candle last; never trade on it."""
     step = pd.Timedelta(interval.replace("m", "min")) if interval.endswith("m") else pd.Timedelta(interval)

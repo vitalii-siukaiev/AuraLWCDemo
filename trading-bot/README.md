@@ -66,9 +66,11 @@ pip install -r requirements.txt
 # What does the market look like right now?
 python -m trading_bot analyze --symbol BTC/USDT --interval 1h
 
-# Backtest on real history (Binance public data, no key needed)
-python -m trading_bot backtest --symbol BTC/USDT --interval 1h --bars 5000
-python -m trading_bot backtest --symbol ETH/USDT --interval 4h --bars 3000
+# Backtest on real Bybit history with Bybit spot fees (default exchange; public data, no key)
+python -m trading_bot backtest --exchange bybit --symbol BTC/USDT --interval 1h --bars 5000
+python -m trading_bot backtest --exchange bybit --symbol ETH/USDT --interval 4h --bars 3000
+# Check your own fee tier in Bybit ("My Fee Rate") and pass it if different, e.g. 0.15%:
+python -m trading_bot backtest --exchange bybit --fee 0.0015 --bars 5000
 
 # Offline backtest on synthetic regime-switching data
 python -m trading_bot backtest --synthetic --seed 7
@@ -77,9 +79,9 @@ python -m trading_bot backtest --synthetic --seed 7
 # so a restart resumes the open position.
 python -m trading_bot paper --symbol BTC/USDT --interval 1h
 
-# Live trading (real money): pip install ccxt first
+# Live trading on Bybit (real money): pip install ccxt first
 export BOT_API_KEY=... BOT_API_SECRET=...      # trade-only key, NO withdrawal permission
-python -m trading_bot live --symbol BTC/USDT --interval 1h --i-understand-the-risk
+python -m trading_bot live --exchange bybit --symbol BTC/USDT --interval 1h --i-understand-the-risk
 ```
 
 Every decision prints the regime, the action and the reasons, e.g.:

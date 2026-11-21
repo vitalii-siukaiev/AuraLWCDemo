@@ -105,8 +105,13 @@ class CCXTBroker:
         try:
             limit = float(self.ex.price_to_precision(self.symbol, stop * 0.995))
             sp = float(self.ex.price_to_precision(self.symbol, stop))
-            o = self.ex.create_order(self.symbol, "STOP_LOSS_LIMIT", "sell", self._amount(qty), limit,
-                                     {"stopPrice": sp, "timeInForce": "GTC"})
+            if self.ex.id == "bybit":
+                # Bybit spot conditional order: limit sell triggered at the stop price.
+                o = self.ex.create_order(self.symbol, "limit", "sell", self._amount(qty), limit,
+                                         {"triggerPrice": sp, "orderFilter": "StopOrder"})
+            else:
+                o = self.ex.create_order(self.symbol, "STOP_LOSS_LIMIT", "sell", self._amount(qty), limit,
+                                         {"stopPrice": sp, "timeInForce": "GTC"})
             self.stop_order_id = o["id"]
         except Exception as e:  # exchange may not support this order type
             log.warning("could not place exchange-side stop (%s) - bot will manage stop by polling", e)

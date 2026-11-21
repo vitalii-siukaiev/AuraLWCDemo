@@ -15,6 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+# Base (non-VIP) spot fees per side. Bybit: help-center "Trading Fee Structure", VIP 0 spot
+# 0.10% maker / 0.10% taker. Some regions differ - check "My Fee Rate" in your account.
+EXCHANGE_FEES = {"binance": 0.001, "bybit": 0.001}
+
+
 @dataclass
 class RiskConfig:
     starting_capital: float = 50.0
