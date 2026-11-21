@@ -8,16 +8,27 @@ how much they lose when wrong. Rules enforced here:
 * Every trade needs a stop, and reward:risk >= 1.5 *after* fees.
 * The expected move must dwarf trading costs (small accounts die by fees).
 * Daily loss limit, consecutive-loss cooldown and a hard kill switch.
-* Spot only, no leverage, no shorting: worst case is bounded.
+* No leverage, ever. Shorts (perps only) are 1x and capped at equity.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 
-# Base (non-VIP) spot fees per side. Bybit: help-center "Trading Fee Structure", VIP 0 spot
-# 0.10% maker / 0.10% taker. Some regions differ - check "My Fee Rate" in your account.
-EXCHANGE_FEES = {"binance": 0.001, "bybit": 0.001}
+# Base (non-VIP) taker fees per side, (exchange, market). Bybit help-center "Trading Fee
+# Structure": spot 0.10% maker / 0.10% taker; USDT perpetuals 0.02% maker / 0.055% taker.
+# Some regions differ - check "My Fee Rate" in your account and pass --fee if needed.
+EXCHANGE_FEES = {("bybit", "spot"): 0.001, ("bybit", "perp"): 0.00055,
+                 ("binance", "spot"): 0.001, ("binance", "perp"): 0.0005}
+# Typical perp funding 0.01% per 8h, charged as a cost (conservative: it can also be income).
+FUNDING_PER_HOUR = 0.0001 / 8
+
+# Risk profiles: return and drawdown both scale roughly with risk per trade.
+PROFILES = {
+    "conservative": dict(risk_per_trade=0.01, max_drawdown=0.10, daily_loss_limit=0.03),
+    "balanced": dict(risk_per_trade=0.02, max_drawdown=0.15, daily_loss_limit=0.05),
+    "aggressive": dict(risk_per_trade=0.03, max_drawdown=0.20, daily_loss_limit=0.07),
+}
 
 
 @dataclass
@@ -36,6 +47,15 @@ class RiskConfig:
     cooldown_bars: int = 12
     cost_multiple: float = 4.0            # target move must be >= 4x round-trip costs
     max_cost_of_risk: float = 0.25        # fees+slippage may eat at most 25% of the risk (1R)
+    funding_per_bar: float = 0.0          # perps only
+
+    @classmethod
+    def build(cls, profile: str = "conservative", exchange: str = "bybit", market: str = "spot",
+              fee: float | None = None, capital: float = 50.0, bar_hours: float = 1.0) -> "RiskConfig":
+        return cls(starting_capital=capital,
+                   fee_rate=fee if fee is not None else EXCHANGE_FEES[(exchange, market)],
+                   funding_per_bar=FUNDING_PER_HOUR * bar_hours if market == "perp" else 0.0,
+                   **PROFILES[profile])
 
 
 @dataclass
@@ -91,9 +111,9 @@ class RiskManager:
     def current_risk_fraction(self, equity: float) -> float:
         dd = 1 - equity / self.state.peak_equity
         frac = self.cfg.risk_per_trade
-        if dd > 0.05:
+        if dd > 0.5 * self.cfg.max_drawdown:
             frac *= 0.5   # trade smaller while digging out of a hole
-        if dd > 0.08:
+        if dd > 0.8 * self.cfg.max_drawdown:
             frac *= 0.5
         return frac
 
@@ -108,33 +128,38 @@ class RiskManager:
         return True, ""
 
     def size(self, equity: float, cash: float, price: float, stop: float, target: float,
-             confidence: float) -> SizingDecision:
+             confidence: float, side: str = "long") -> SizingDecision:
+        """All prices are real prices. For shorts the stop is above and the
+        target below the entry."""
         c = self.cfg
+        sgn = 1 if side == "long" else -1
         if confidence < c.min_confidence:
             return SizingDecision(False, reason=f"confidence {confidence:.2f} < {c.min_confidence}")
-        if stop >= price:
-            return SizingDecision(False, reason="invalid stop")
-        fill = price * (1 + c.slippage)
-        cost_per_unit = fill * c.fee_rate + max(stop, 0) * (c.fee_rate + c.slippage)
-        risk_per_unit = fill - stop * (1 - c.slippage) + cost_per_unit
-        reward_per_unit = target * (1 - c.slippage - c.fee_rate) - fill * (1 + c.fee_rate)
+        if sgn * (price - stop) <= 0 or sgn * (target - price) <= 0:
+            return SizingDecision(False, reason="invalid stop/target")
+        fill = price * (1 + sgn * c.slippage)
+        stop_fill = stop * (1 - sgn * c.slippage)
+        risk_per_unit = sgn * (fill - stop_fill) + c.fee_rate * (fill + stop_fill)
+        reward_per_unit = sgn * (target - fill) - c.fee_rate * (fill + target)
         if reward_per_unit <= 0:
             return SizingDecision(False, reason="target doesn't cover costs")
         rr = reward_per_unit / risk_per_unit
         if rr < c.min_reward_risk:
             return SizingDecision(False, reason=f"reward:risk {rr:.2f} < {c.min_reward_risk}")
-        stop_dist = 1 - stop / price
+        stop_dist = abs(1 - stop / price)
         if self.round_trip_cost > c.max_cost_of_risk * stop_dist:
             return SizingDecision(False, reason=f"stop {stop_dist:.2%} too tight - fees would eat >"
                                                 f"{c.max_cost_of_risk:.0%} of the risk")
-        move = target / price - 1
+        move = abs(target / price - 1)
         if move < c.cost_multiple * self.round_trip_cost:
             return SizingDecision(False, reason=f"expected move {move:.2%} too small vs fees")
 
         risk_amount = equity * self.current_risk_fraction(equity)
         qty = risk_amount / risk_per_unit
         notional = qty * fill
-        max_notional = min(cash, equity) * c.max_position_frac / (1 + c.fee_rate)
+        # Longs are paid from cash; shorts are 1x, collateralised by equity.
+        budget = min(cash, equity) if side == "long" else equity
+        max_notional = budget * c.max_position_frac / (1 + c.fee_rate)
         if notional > max_notional:
             notional = max_notional
             qty = notional / fill

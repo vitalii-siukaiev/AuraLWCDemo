@@ -4,12 +4,14 @@ from __future__ import annotations
 import argparse
 import logging
 
+import pandas as pd
+
 from .backtest import run_backtest
 from .data import drop_open_candle, fetch, load_csv, synthetic
-from .engine import TradingEngine
+from .engine import DEFAULT_LONG, DEFAULT_SHORT, TradingEngine
 from .regime import classify
-from .risk import EXCHANGE_FEES, RiskConfig
-from .selector import StrategySelector
+from .risk import PROFILES, RiskConfig
+from .strategies import ALL_STRATEGIES
 
 
 def _data(args):
@@ -17,15 +19,24 @@ def _data(args):
         return synthetic(args.bars, seed=args.seed)
     if args.csv:
         return load_csv(args.csv)
-    return drop_open_candle(fetch(args.exchange, args.symbol, args.interval, total=args.bars), args.interval)
+    return drop_open_candle(fetch(args.exchange, args.symbol, args.interval, total=args.bars, market=args.market),
+                            args.interval)
+
+
+def _bar_hours(interval: str) -> float:
+    return pd.Timedelta(interval.replace("m", "min") if interval.endswith("m") else interval) / pd.Timedelta("1h")
 
 
 def _cfg(args) -> RiskConfig:
-    fee = args.fee if args.fee is not None else EXCHANGE_FEES[args.exchange]
-    return RiskConfig(starting_capital=args.capital, fee_rate=fee)
+    return RiskConfig.build(args.profile, args.exchange, args.market, args.fee, args.capital, _bar_hours(args.interval))
+
+
+def _list(s: str | None) -> list[str] | None:
+    return [x.strip() for x in s.split(",")] if s else None
 
 
 def main() -> None:
+    names = ", ".join(c.name for c in ALL_STRATEGIES)
     ap = argparse.ArgumentParser(prog="trading_bot", description="Adaptive multi-strategy crypto bot")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("backtest", "analyze", "paper", "live"):
@@ -33,8 +44,15 @@ def main() -> None:
         p.add_argument("--symbol", default="BTC/USDT")
         p.add_argument("--interval", default="1h")
         p.add_argument("--capital", type=float, default=50.0)
-        p.add_argument("--exchange", choices=sorted(EXCHANGE_FEES), default="bybit")
+        p.add_argument("--exchange", choices=["bybit", "binance"], default="bybit")
+        p.add_argument("--market", choices=["spot", "perp"], default="spot",
+                       help="spot = long only; perp = USDT perpetual at 1x, long and short (lower fees)")
+        p.add_argument("--profile", choices=list(PROFILES), default="conservative",
+                       help="risk per trade 1%% / 2%% / 3%% with kill switch at -10%% / -15%% / -20%%")
         p.add_argument("--fee", type=float, help="override fee per side, e.g. 0.001 = 0.1%%")
+        p.add_argument("--strategies", help=f"long strategies (default {','.join(DEFAULT_LONG)}); "
+                                            f"available: {names}")
+        p.add_argument("--short-strategies", help=f"short strategies on perp (default {','.join(DEFAULT_SHORT)})")
         p.add_argument("-v", "--verbose", action="store_true")
         if name in ("backtest", "analyze"):
             p.add_argument("--bars", type=int, default=3000)
@@ -52,30 +70,37 @@ def main() -> None:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    short = args.market == "perp"
+    longs, shorts = _list(args.strategies), _list(args.short_strategies)
 
     if args.cmd == "backtest":
-        res = run_backtest(_data(args), _cfg(args))
-        print(f"Exchange {args.exchange}, fee {res.engine.risk.cfg.fee_rate:.3%} per side")
+        cfg = _cfg(args)
+        res = run_backtest(_data(args), cfg, allow_short=short, strategies=longs, short_strategies=shorts)
+        print(f"{args.exchange} {args.market}, profile {args.profile}, fee {cfg.fee_rate:.3%} per side")
         print(res.report())
-        print("Strategy health:", res.engine.selector.summary())
+        for side, sel in res.engine.selectors.items():
+            print(f"Strategy health ({side}):", sel.summary())
         for t in res.engine.trades[-10:]:
-            print(f"  {t.closed_at[:16]} {t.strategy:<17} {t.pnl:+.2f}$ {t.r_multiple:+.2f}R  {t.reason}")
+            print(f"  {t.closed_at[:16]} {t.side:<5} {t.strategy:<17} {t.pnl:+.2f}$ {t.r_multiple:+.2f}R  {t.reason}")
     elif args.cmd == "analyze":
-        data = TradingEngine.prepare(_data(args))
-        r = data.iloc[-1]
-        reading = classify(r, bool(r.htf_bull))
-        print(f"{data.index[-1]}  close {r.close:.2f}")
-        print(f"Regime: {reading.regime.value}  (trend score {reading.trend_score:+.2f}, "
-              f"vol rank {reading.volatility_rank:.0%}, HTF bullish {reading.htf_bullish}) - {reading.notes}")
-        print(f"RSI {r.rsi:.1f} | MACD hist {r.macd_hist:+.2f} | ADX {r.adx:.1f} | %B {r.bb_pctb:.2f} | "
-              f"ATR {r.atr_pct:.2%} | stoch {r.stoch_k:.0f}")
-        best, sigs = StrategySelector().evaluate(data, reading)
-        for s in sigs:
-            print(f"  {s.strategy:<17} {s.action.value:<5} {'; '.join(s.reasons)}")
-        print("Best setup:", f"{best.strategy} stop {best.stop:.2f} target {best.target:.2f}" if best else "none - stay in cash")
+        eng = TradingEngine(None, _cfg(args), allow_short=short, strategies=longs, short_strategies=shorts)
+        views = eng.prepare_views(_data(args))
+        r = views["long"].iloc[-1]
+        print(f"{views['long'].index[-1]}  close {r.close:.2f}")
+        print(f"RSI {r.rsi:.1f} | RSI(2) {r.rsi2:.0f} | MACD hist {r.macd_hist:+.2f} | ADX {r.adx:.1f} | "
+              f"%B {r.bb_pctb:.2f} | ATR {r.atr_pct:.2%} | stoch {r.stoch_k:.0f}")
+        for side, view in views.items():
+            row = view.iloc[-1]
+            rd = classify(row, bool(row.htf_bull))
+            print(f"[{side}] regime as seen by {side}s: {rd.regime.value} (trend score {rd.trend_score:+.2f}) - {rd.notes}")
+            best, sigs = eng.selectors[side].evaluate(view, rd)
+            for s in sigs:
+                print(f"    {s.strategy:<17} {s.action.value:<5} {'; '.join(s.reasons)}")
+            print(f"    best {side} setup:", best.strategy if best else "none")
     else:
         from .live import run
-        run(args.symbol, args.interval, args.cmd, _cfg(args), args.state, args.poll, args.once, args.exchange)
+        run(args.symbol, args.interval, args.cmd, _cfg(args), args.state, args.poll, args.once, args.exchange,
+            market=args.market, strategies=longs, short_strategies=shorts)
 
 
 if __name__ == "__main__":

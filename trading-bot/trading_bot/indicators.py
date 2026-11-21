@@ -98,6 +98,8 @@ def add_all(df: pd.DataFrame) -> pd.DataFrame:
     out["adx"], out["pdi"], out["mdi"] = adx(out, 14)
     out["stoch_k"], out["stoch_d"] = stochastic(out)
     out["dc_up"], out["dc_lo"] = donchian(out, 20)
+    out["dc55_up"], out["dc55_lo"] = donchian(out, 55)
+    out["rsi2"] = rsi(c, 2)
     out["vol_sma"] = sma(out["volume"], 20)
     out["obv"] = obv(out)
     out["obv_ema"] = ema(out["obv"], 20)

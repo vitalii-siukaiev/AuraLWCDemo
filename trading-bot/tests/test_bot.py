@@ -85,3 +85,61 @@ def test_state_roundtrip(df):
     assert eng2.bar_index == eng.bar_index
     assert (eng2.position is None) == (eng.position is None)
     assert len(eng2.trades) == len(eng.trades)
+
+
+# ---- short side / perps ------------------------------------------------
+from trading_bot.engine import invert, mirror_constant, mirror_text  # noqa: E402
+
+
+def test_paper_short_pnl():
+    b = PaperBroker(50, fee_rate=0.0, slippage=0)
+    b.open("short", 0.1, 100)
+    assert b.equity(90) == pytest.approx(51.0)     # price fell 10 -> +$1
+    b.close("short", 0.1, 90)
+    assert b.cash == pytest.approx(51.0) and b.qty == 0
+
+
+def test_short_sizing_mirrors_long():
+    rm = RiskManager(RiskConfig())
+    lo = rm.size(50, 50, 100, 97, 106, 0.8, side="long")
+    sh = rm.size(50, 50, 100, 103, 94, 0.8, side="short")
+    assert lo.approved and sh.approved
+    assert sh.risk_amount == pytest.approx(lo.risk_amount, rel=0.02)
+    assert not rm.size(50, 50, 100, 97, 94, 0.8, side="short").approved   # stop on wrong side
+
+
+def test_invert_is_involution(df):
+    k = mirror_constant(float(df.close.iloc[0]))
+    back = invert(invert(df, k), k)
+    np.testing.assert_allclose(back[["open", "high", "low", "close"]].values,
+                               df[["open", "high", "low", "close"]].values)
+    assert (invert(df, k).high >= invert(df, k).low).all()
+
+
+def test_mirror_text():
+    assert mirror_text("close above 20-bar high in uptrend") == "close below 20-bar low in downtrend"
+
+
+def test_shorts_profit_in_a_falling_market():
+    """A long-only bot sits in cash in a steady decline; shorts should earn."""
+    rng = np.random.default_rng(0)
+    n = 1500
+    close = 30000 * np.exp(np.cumsum(-0.0012 + 0.004 * rng.standard_normal(n)))
+    import pandas as pd
+    d = pd.DataFrame({"open": np.r_[close[0], close[:-1]], "close": close}, index=pd.date_range("2024", periods=n, freq="1h", tz="UTC"))
+    d["high"] = d[["open", "close"]].max(axis=1) * 1.002
+    d["low"] = d[["open", "close"]].min(axis=1) * 0.998
+    d["volume"] = 100 + 1e5 * (d.close / d.open - 1).abs()
+    res = run_backtest(d, RiskConfig.build(market="perp"), allow_short=True)
+    assert any(t.side == "short" for t in res.engine.trades)
+    assert res.end_equity > 50
+
+
+def test_perp_state_roundtrip(df):
+    eng = TradingEngine(PaperBroker(50), RiskConfig.build(market="perp"), allow_short=True)
+    views = eng.prepare_views(df)
+    for i in range(WARMUP, 1200):
+        eng.step({s: v.iloc[: i + 1] for s, v in views.items()})
+    eng2 = TradingEngine(PaperBroker(50), RiskConfig.build(market="perp"), allow_short=True)
+    eng2.load_state(eng.state())
+    assert eng2.k == eng.k and set(eng2.selectors) == {"long", "short"}

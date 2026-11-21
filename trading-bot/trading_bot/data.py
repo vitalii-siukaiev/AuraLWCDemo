@@ -88,9 +88,12 @@ def fetch_bybit(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 1000
     return df[~df.index.duplicated()].sort_index()
 
 
-def fetch(exchange: str, symbol: str, interval: str, limit: int = 1000, total: int | None = None) -> pd.DataFrame:
-    fn = fetch_bybit if exchange == "bybit" else fetch_binance
-    return fn(symbol, interval, limit=limit, total=total)
+def fetch(exchange: str, symbol: str, interval: str, limit: int = 1000, total: int | None = None,
+          market: str = "spot") -> pd.DataFrame:
+    if exchange == "bybit":
+        return fetch_bybit(symbol, interval, limit=limit, total=total,
+                           category="linear" if market == "perp" else "spot")
+    return fetch_binance(symbol, interval, limit=limit, total=total)  # spot candles as a proxy for perps
 
 
 def drop_open_candle(df: pd.DataFrame, interval: str) -> pd.DataFrame:

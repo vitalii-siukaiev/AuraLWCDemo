@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .broker import PaperBroker
-from .engine import WARMUP, TradingEngine
+from .engine import LONG, WARMUP, TradingEngine
 from .risk import RiskConfig
 
 
@@ -40,7 +40,7 @@ class BacktestResult:
             "-" * 60, "By strategy:",
         ]
         for k, v in self.by_strategy.items():
-            lines.append(f"  {k:<18} trades {v['trades']:>3}  P&L ${v['pnl']:+7.2f}  avg {v['avg_r']:+.2f}R")
+            lines.append(f"  {k:<24} trades {v['trades']:>3}  P&L ${v['pnl']:+7.2f}  avg {v['avg_r']:+.2f}R")
         lines.append("Regime mix: " + ", ".join(f"{k} {v:.0%}" for k, v in self.regime_mix.items()))
         if self.engine.risk.state.halted:
             lines.append(f"KILL SWITCH: {self.engine.risk.state.halt_reason}")
@@ -48,20 +48,25 @@ class BacktestResult:
         return "\n".join(lines)
 
 
-def run_backtest(df: pd.DataFrame, cfg: RiskConfig | None = None, htf_factor: int = 4) -> BacktestResult:
+def run_backtest(df: pd.DataFrame, cfg: RiskConfig | None = None, htf_factor: int = 4,
+                 allow_short: bool = False, strategies: list[str] | None = None,
+                 short_strategies: list[str] | None = None) -> BacktestResult:
     cfg = cfg or RiskConfig()
     broker = PaperBroker(cfg.starting_capital, cfg.fee_rate, cfg.slippage)
-    eng = TradingEngine(broker, cfg, htf_factor=htf_factor)
-    data = TradingEngine.prepare(df, htf_factor)
+    eng = TradingEngine(broker, cfg, htf_factor=htf_factor, allow_short=allow_short, strategies=strategies,
+                        short_strategies=short_strategies)
+    views = eng.prepare_views(df)
+    data = views[LONG]
 
     equity = []
     for i in range(WARMUP, len(data)):
-        window = data.iloc[max(0, i - 300): i + 1]
-        d = eng.step(window)
+        lo = max(0, i - 300)
+        d = eng.step({s: v.iloc[lo: i + 1] for s, v in views.items()})
         equity.append(d.equity)
     if eng.position:  # close at the end for clean accounting
-        eng._close(float(data.close.iloc[-1]), data.index[-1], "end of backtest")
-        equity[-1] = broker.equity(float(data.close.iloc[-1]))
+        last = float(data.close.iloc[-1])
+        eng._close(eng._side_price(last), data.index[-1], "end of backtest")
+        equity[-1] = broker.equity(last)
 
     curve = pd.Series(equity, index=data.index[WARMUP:])
     dd = float((1 - curve / curve.cummax()).max()) if len(curve) else 0.0
@@ -69,7 +74,7 @@ def run_backtest(df: pd.DataFrame, cfg: RiskConfig | None = None, htf_factor: in
     wins, losses = pnls[pnls > 0].sum(), -pnls[pnls < 0].sum()
     by: dict = {}
     for t in eng.trades:
-        b = by.setdefault(t.strategy, {"trades": 0, "pnl": 0.0, "rs": []})
+        b = by.setdefault(f"{t.side} {t.strategy}", {"trades": 0, "pnl": 0.0, "rs": []})
         b["trades"] += 1
         b["pnl"] += t.pnl
         b["rs"].append(t.r_multiple)

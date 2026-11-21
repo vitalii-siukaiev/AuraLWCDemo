@@ -1,7 +1,8 @@
 # Adaptive Trading Bot ($50 capital-preservation edition)
 
-A crypto spot trading bot that **reads the market regime first, then picks the
-strategy that fits it**, and drops strategies that stop working. Above all, its
+A crypto trading bot for Bybit (spot, or USDT perpetuals at 1x) that **reads the market
+regime first, then picks the strategy that fits it**, and drops strategies that stop
+working. It can go long in uptrends and, on perps, short in downtrends. Above all, its
 job is to **not lose the $50**.
 
 > ⚠️ **No bot can guarantee profit or predict the market.** This one is built
@@ -17,23 +18,30 @@ Every closed candle (default 1h, BTC/USDT):
    - Stop-loss / take-profit hit? Exit.
    - At +1R, move the stop to break-even (a winner never turns into a loser).
    - At +1.5R, trail the stop at 2.5×ATR below the high (chandelier stop).
-   - Regime turned hostile (downtrend / volatility chaos)? Get out.
+   - Regime turned hostile for the position's side (e.g. a downtrend for a long)? Get out.
    - The strategy's own exit (trend broken, failed breakout, mean reached).
    - Time stop: after 48 bars with < 0.5R of progress, free up the capital.
 2. **Analyze the market: what regime are we in?** (`regime.py`)
 
    | Regime | Detected by | Playbook |
    |---|---|---|
-   | strong_uptrend / uptrend | ADX, EMA 21/50/200 stack, +DI/−DI, EMA50 slope, 4h trend filter | **Trend pullback** |
-   | range | low ADX, no directional edge | **Mean reversion** (+ breakout watch) |
-   | squeeze | Bollinger width in bottom 15% of last 200 bars | **Squeeze breakout** |
-   | downtrend | negative trend score | **Stay in cash** |
+   | strong_uptrend / uptrend | ADX, EMA 21/50/200 stack, +DI/−DI, EMA50 slope, 4h trend filter | **Trend pullback**, **Donchian breakout**, **RSI(2) pullback** |
+   | range | low ADX, no directional edge | **Mean reversion** |
+   | squeeze | Bollinger width in bottom 15% of last 200 bars | wait (squeeze breakout is opt-in) |
+   | downtrend | negative trend score | spot: **stay in cash** · perp: **Donchian breakdown short** |
    | high_vol_chaos | ATR% in top 5% and no trend | **Stay in cash** |
 
 3. **Ask the matching strategies for a setup.** Each one scores its own confluence of indicators:
    - `TrendPullback`: pullback to EMA21 in an uptrend + bullish candle + rising MACD histogram + healthy RSI + OBV accumulation. Won't chase or buy overbought.
    - `MeanReversion`: lower Bollinger band + RSI turning up from oversold + stochastic cross + reversal candle. Won't catch a falling knife.
-   - `SqueezeBreakout`: recent squeeze + close above the 20-bar Donchian high + volume ≥ 1.5× average. Ignores breakouts without volume.
+   - `DonchianTrend` (turtle-style): fresh 55-bar high + ADX ≥ 20 + stacked EMAs + volume. Stop 2.5×ATR; the trailing stop rides the trend; exits on a 20-bar low. The best performer in testing, on both longs and shorts.
+   - `RSI2Pullback` (Connors-style): above EMA200, RSI(2) < 10, then a bounce candle. High win rate, small wins.
+   - `SqueezeBreakout`: recent squeeze + close above the 20-bar Donchian high + volume ≥ 1.5× average. **Off by default** (it lost money in both development and held-out tests); enable with `--strategies`.
+
+   **Shorts (perp only)** use a *mirror view*: the price series is inverted (p → K/p, highs and lows
+   swapped), which turns a downtrend into an uptrend. The same long strategies, stops and trailing rules
+   then run on the mirrored chart, so long and short logic can't drift apart. By default only
+   `DonchianTrend` trades short (the other strategies showed no short-side edge in testing).
 4. **Dynamic selection** (`selector.py`). The signal's confidence is multiplied by the strategy's recent
    track record (rolling expectancy in R). A strategy whose expectancy drops below −0.25R
    over ≥5 trades is **benched**. It keeps paper-trading in the background (shadow trades)
@@ -45,16 +53,17 @@ Every closed candle (default 1h, BTC/USDT):
 
 | Rule | Default |
 |---|---|
-| Risk per trade | 1% of equity (≈ $0.50 on $50) |
-| Risk while in drawdown | halved after −5%, quartered after −8% |
+| Risk per trade | 1% / 2% / 3% of equity (`--profile conservative / balanced / aggressive`) |
+| Risk while in drawdown | halved at 50% of the kill-switch level, quartered at 80% |
 | Minimum reward:risk (after fees) | 1.5 |
 | Stop can't be so tight that fees exceed | 25% of the risk |
 | Expected move must exceed | 4× round-trip fees |
 | Minimum confidence | 0.6 |
-| Daily loss limit | −3% → done for the day |
+| Daily loss limit | −3% / −5% / −7% → done for the day |
 | Losing streak | 3 losses → 12-bar cooldown |
-| **Kill switch** | −10% from peak → close everything, stop trading |
-| Leverage / shorting | none (spot long only, worst case is bounded) |
+| **Kill switch** | −10% / −15% / −20% from peak → close everything, stop trading |
+| Leverage | **none, ever**. Perp shorts are 1x, with notional capped at equity |
+| Perp funding | charged as a cost every bar (0.01% per 8h) |
 | Exchange-side stop order | placed after every live entry, so you're protected even if the bot crashes |
 
 ## Usage
@@ -75,6 +84,9 @@ python -m trading_bot backtest --exchange bybit --fee 0.0015 --bars 5000
 # Offline backtest on synthetic regime-switching data
 python -m trading_bot backtest --synthetic --seed 7
 
+# Long + short on Bybit USDT perpetuals (1x, lower fees: 0.055% taker), 2% risk per trade
+python -m trading_bot backtest --market perp --profile balanced --bars 5000
+
 # Paper trading: simulated $50, real live prices. State is saved to bot_state.json,
 # so a restart resumes the open position.
 python -m trading_bot paper --symbol BTC/USDT --interval 1h
@@ -82,6 +94,7 @@ python -m trading_bot paper --symbol BTC/USDT --interval 1h
 # Live trading on Bybit (real money): pip install ccxt first
 export BOT_API_KEY=... BOT_API_SECRET=...      # trade-only key, NO withdrawal permission
 python -m trading_bot live --exchange bybit --symbol BTC/USDT --interval 1h --i-understand-the-risk
+python -m trading_bot live --market perp --profile balanced --i-understand-the-risk   # perps, long+short
 ```
 
 Every decision prints the regime, the action and the reasons, e.g.:
@@ -92,37 +105,30 @@ Every decision prints the regime, the action and the reasons, e.g.:
    Why: pullback to EMA21 in uptrend, bullish close back above EMA9, MACD histogram rising, ...
 ```
 
-## Test results (synthetic data)
+## Test results (synthetic data, with Bybit fees)
 
-30 random regime-switching datasets of 4,000 hourly bars. The first 12 were used during
-development; the last 18 were held out and never tuned on:
+30 random regime-switching datasets of 4,000 hourly bars (about 5.5 months each), $50 start,
+Bybit fees ([fee structure](https://www.bybit.com/en/help-center/article/Trading-Fee-Structure):
+spot 0.10%; USDT perpetuals 0.055% taker / 0.02% maker), 0.05% slippage, and perp funding charged as a cost.
+Strategy choices were made on seeds 1–12 only. **Seeds 13–30 were held out** and are the numbers to trust:
 
-| | Bot mean | Bot worst | Bot max drawdown | Buy & hold mean | Buy & hold worst |
-|---|---|---|---|---|---|
-| Dev seeds 1–12 | +6.1% | −1.9% | 8.1% | +55% | −68% |
-| Held-out 13–30 | +0.6% | −6.4% | 7.2% | +22% | −80% |
-
-Read this honestly: on random data the bot is roughly **breakeven**, because random data has no
-edge to find. What the test shows is that the **downside is capped** (worst case ≈ −6% to −10%, versus
-−80% for holding). The bot gives up a lot of upside in strong bull runs in exchange for
-that protection. Backtest on real data (`backtest --symbol ...`) before trusting it.
-
-### With Bybit fees (all 30 seeds, $50 start, ~5.5 months of hourly bars each)
-
-Bybit spot VIP 0 is 0.10% maker / 0.10% taker
-([fee structure](https://www.bybit.com/en/help-center/article/Trading-Fee-Structure)).
-
-| Scenario | Mean | Median | Worst | Best | Runs in profit | Max DD |
+| Configuration (held-out seeds 13–30) | Mean | Median | Worst | Best | Runs in profit | Max DD |
 |---|---|---|---|---|---|---|
-| No fees (reference) | +6.2% | +4.0% | −8.3% | +45.8% | 67% | 8.5% |
-| **Bybit 0.10% + 0.05% slippage** | **+2.8%** | **+1.0%** | **−6.4%** | +34.5% | 67% | 8.1% |
-| Bybit 0.10% + 0.10% slippage | +2.3% | +1.4% | −5.7% | +24.0% | 63% | 7.2% |
-| 0.15% fee + 0.05% slippage | +2.2% | +0.9% | −5.7% | +26.1% | 60% | 7.4% |
-| Stress 0.20% + 0.10% slippage | +1.0% | +0.5% | −5.6% | +14.7% | 53% | 6.1% |
+| Original bot (spot, 3 strategies, 1%) | +0.5% | 0.0% | −6.0% | +12.9% | 50% | 7.5% |
+| Spot, new strategies, 1% (default) | +3.4% | +2.1% | −5.9% | +14.8% | 61% | 6.8% |
+| Perp long+short, 1% | +3.7% | +1.8% | −7.9% | +24.8% | 61% | 8.8% |
+| **Perp long+short, balanced 2%** | **+8.8%** | **+7.1%** | **−12.6%** | +53.5% | 61% | 13.8% |
+| Perp long+short, aggressive 3% | +15.3% | +9.7% | −15.0% | +90.2% | 56% | 18.5% |
 
-Fees cut the average result by more than half. The bot adapts to higher fees by taking fewer
-trades (its fee filter rejects setups that are too small), which is why the downside stays capped.
-On $50 a typical +1% run is about **$0.50**.
+How to read this:
+
+* **Most of the extra return comes from risking more per trade.** Returns and losses grow together:
+  the 3% profile's worst run lost 15%. There is no free lunch.
+* **Strategy changes alone** took the median from 0% to about +2% at the same 1% risk.
+* **Shorting** mostly helps in bear markets and raises the best case; the median barely moves.
+* **Synthetic data is not the real market.** Its trends are built in, which flatters trend-following.
+  Treat these numbers as a check that the machinery works, not as a forecast. Run
+  `backtest --market perp --profile balanced --bars 5000` on real Bybit history, then paper-trade.
 
 ## Project layout
 
@@ -130,14 +136,14 @@ On $50 a typical +1% run is about **$0.50**.
 trading_bot/
   indicators.py      EMA, RSI, MACD, Bollinger, ATR, ADX/DI, Stochastic, Donchian, OBV
   regime.py          market regime classifier + higher-timeframe trend filter
-  strategies/        trend pullback, mean reversion, squeeze breakout
+  strategies/        trend pullback, mean reversion, Donchian trend, RSI(2) pullback, squeeze breakout
   selector.py        dynamic strategy selection, benching, shadow trades
   risk.py            position sizing and all capital-protection rules
-  engine.py          per-candle decision cycle (shared by backtest/paper/live)
-  broker.py          PaperBroker (fees + slippage) and CCXTBroker (live)
+  engine.py          per-candle decision cycle (shared by backtest/paper/live), mirror view for shorts
+  broker.py          PaperBroker (fees, slippage, shorts, funding) and CCXTBroker (live spot/perp)
   live.py            polling loop, intrabar stop checks, state persistence
   backtest.py        event-driven backtester (no look-ahead)
-  data.py            Binance klines, CSV loader, synthetic data generator
+  data.py            Bybit / Binance klines, CSV loader, synthetic data generator
 tests/               pytest suite (no look-ahead, sizing caps, kill switch, ...)
 ```
 
